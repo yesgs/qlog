@@ -1,0 +1,113 @@
+rule_files:
+  - qlog-alerts.yml
+evaluation_interval: 1m
+tests:
+  - name: unresolved fault stays firing during idle and clears on recovery
+    interval: 1m
+    input_series:
+      - series: 'qlog_failed{instance="localhost:9090",directory="/data/request",stream="request"}'
+        values: '0 1 1 1 0'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: QlogUnresolvedIOFailure
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: QlogUnresolvedIOFailure
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: QlogUnresolvedIOFailure
+        exp_alerts:
+          - exp_labels:
+              instance: localhost:9090
+              directory: /data/request
+              stream: request
+              severity: warning
+            exp_annotations:
+              summary: 'qlog I/O 故障未恢复（localhost:9090）'
+              description: '日志流 request（/data/request）的 I/O 故障持续至少 1 分钟；请检查 ERROR 诊断和磁盘状态。'
+      - eval_time: 3m
+        alertname: QlogUnresolvedIOFailure
+        exp_alerts:
+          - exp_labels:
+              instance: localhost:9090
+              directory: /data/request
+              stream: request
+              severity: warning
+            exp_annotations:
+              summary: 'qlog I/O 故障未恢复（localhost:9090）'
+              description: '日志流 request（/data/request）的 I/O 故障持续至少 1 分钟；请检查 ERROR 诊断和磁盘状态。'
+      - eval_time: 4m
+        alertname: QlogUnresolvedIOFailure
+        exp_alerts: []
+  - name: dropping records fires and clears after the counter stops growing
+    interval: 1m
+    input_series:
+      - series: 'qlog_stream_failed_records_total{instance="localhost:9090",directory="/data/request",stream="request"}'
+        values: '0 0 10 20 30 40 50 50 50 50 50 50 50'
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: QlogDroppingRecords
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: QlogDroppingRecords
+        exp_alerts:
+          - exp_labels:
+              instance: localhost:9090
+              directory: /data/request
+              stream: request
+              severity: warning
+            exp_annotations:
+              summary: 'qlog 正在丢弃记录（localhost:9090）'
+              description: '日志流 request（/data/request）近 5 分钟有记录被丢弃（队列满、故障冷却或写失败）；检查 failed_* 计数器、队列水位与 ERROR 诊断。'
+      - eval_time: 12m
+        alertname: QlogDroppingRecords
+        exp_alerts: []
+  - name: saturated queue fires after five minutes and clears when it drains
+    interval: 1m
+    input_series:
+      - series: 'qlog_queue_bytes{instance="localhost:9090",directory="/data/request",stream="request"}'
+        values: '0 0 95 95 95 95 95 95 95 0'
+      - series: 'qlog_queue_capacity_bytes{instance="localhost:9090",directory="/data/request",stream="request"}'
+        values: '100 100 100 100 100 100 100 100 100 100'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: QlogQueueNearCapacity
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: QlogQueueNearCapacity
+        exp_alerts:
+          - exp_labels:
+              instance: localhost:9090
+              directory: /data/request
+              stream: request
+              severity: warning
+            exp_annotations:
+              summary: 'qlog 队列接近满载（localhost:9090）'
+              description: '日志流 request（/data/request）的队列字节数持续超过容量的 90%，新记录可能开始被丢弃。'
+      - eval_time: 9m
+        alertname: QlogQueueNearCapacity
+        exp_alerts: []
+  - name: drop ratio preserves low traffic and omits idle streams
+    interval: 1m
+    input_series:
+      - series: 'qlog_stream_received_records_total{stream="all-dropped"}'
+        values: '0+1x10'
+      - series: 'qlog_stream_failed_records_total{stream="all-dropped"}'
+        values: '0+1x10'
+      - series: 'qlog_stream_received_records_total{stream="half-dropped"}'
+        values: '0+2x10'
+      - series: 'qlog_stream_failed_records_total{stream="half-dropped"}'
+        values: '0+1x10'
+      - series: 'qlog_stream_received_records_total{stream="idle"}'
+        values: '0+0x10'
+      - series: 'qlog_stream_failed_records_total{stream="idle"}'
+        values: '0+0x10'
+    promql_expr_test:
+      # Keep this formula aligned with the dashboard's drop-ratio panel.
+      - expr: rate(qlog_stream_failed_records_total[5m]) / (rate(qlog_stream_received_records_total[5m]) > 0)
+        eval_time: 10m
+        exp_samples:
+          - labels: '{stream="all-dropped"}'
+            value: 1
+          - labels: '{stream="half-dropped"}'
+            value: 0.5

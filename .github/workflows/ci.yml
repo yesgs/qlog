@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Verify modules
+        run: go mod verify
+      - name: Test (race + coverage)
+        run: go test -race -cover ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install golangci-lint
+        run: curl --fail --silent --show-error --location https://raw.githubusercontent.com/golangci/golangci-lint/25c5369a93aacb8cccea0d46e1569ca4a194564d/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.15.0
+      - name: Lint
+        run: "$(go env GOPATH)/bin/golangci-lint run"
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+      - name: govulncheck
+        run: "$(go env GOPATH)/bin/govulncheck ./..."
+
+  fuzz:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fuzz
+        run: make fuzz
+
+  monitoring:
+    name: monitoring rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Prometheus configuration
+        run: docker run --rm --entrypoint /bin/promtool -v "$PWD/monitoring:/monitoring:ro" -w /monitoring prom/prometheus:v3.5.0 check config prometheus.yml
+      - name: Test alert firing and recovery
+        run: docker run --rm --entrypoint /bin/promtool -v "$PWD/monitoring:/monitoring:ro" -w /monitoring prom/prometheus:v3.5.0 test rules qlog-alerts.test.yml

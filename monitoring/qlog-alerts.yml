@@ -1,0 +1,27 @@
+groups:
+  - name: qlog
+    rules:
+      - alert: QlogUnresolvedIOFailure
+        expr: qlog_failed == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'qlog I/O 故障未恢复（{{ $labels.instance }}）'
+          description: '日志流 {{ $labels.stream }}（{{ $labels.directory }}）的 I/O 故障持续至少 1 分钟；请检查 ERROR 诊断和磁盘状态。'
+      - alert: QlogDroppingRecords
+        expr: increase(qlog_stream_failed_records_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'qlog 正在丢弃记录（{{ $labels.instance }}）'
+          description: '日志流 {{ $labels.stream }}（{{ $labels.directory }}）近 5 分钟有记录被丢弃（队列满、故障冷却或写失败）；检查 failed_* 计数器、队列水位与 ERROR 诊断。'
+      - alert: QlogQueueNearCapacity
+        expr: qlog_queue_bytes / qlog_queue_capacity_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'qlog 队列接近满载（{{ $labels.instance }}）'
+          description: '日志流 {{ $labels.stream }}（{{ $labels.directory }}）的队列字节数持续超过容量的 90%，新记录可能开始被丢弃。'

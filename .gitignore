@@ -1,0 +1,10 @@
+.tools/
+bin/
+data/
+*.out
+*.prof
+*.test
+/validation/
+.workbuddy
+.qoder
+.trae
